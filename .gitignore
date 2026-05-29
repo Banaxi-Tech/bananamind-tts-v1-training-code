@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual environments and local config
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Datasets and downloaded archives
+data/
+datasets/
+LJSpeech*/
+download_ljspeech_50_original.py
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.bz2
+*.7z
+
+# Local packaged model/demo folders
+BananaMind-TTS-V1/
+playground/
+test-v2/
+
+# Model weights, checkpoints, and training outputs
+checkpoints/
+checkpoints_*/
+runs/
+wandb/
+lightning_logs/
+outputs/
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.onnx
+*.gguf
+
+# Generated audio and demo outputs
+samples/
+playground/outputs/
+test-v2/outputs/
+*.wav
+*.mp3
+*.flac
+
+# Local/editor files
+.agents/
+.codex/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

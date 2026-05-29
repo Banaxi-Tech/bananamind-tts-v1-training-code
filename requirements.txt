@@ -1,0 +1,11 @@
+torch>=2.3
+datasets>=2.19
+numpy>=1.26
+PyYAML>=6.0
+tqdm>=4.66
+tensorboard>=2.16
+soundfile>=0.12
+torchaudio>=2.3
+safetensors>=0.4
+# Optional phoneme backend. Enable config text.use_phonemes only after installing it.
+phonemizer>=3.2

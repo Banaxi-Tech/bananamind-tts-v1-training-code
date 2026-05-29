@@ -1,0 +1,67 @@
+project:
+  name: BananaTTS-20M-Tacotron
+  seed: 1337
+
+dataset:
+  name: MikhailT/lj-speech
+  fallback_name: keithito/lj_speech
+  split: train
+  cache_dir: data/cache/ljspeech_22050
+  validation_ratio: 0.02
+  limit: null
+  percent: null
+  min_audio_seconds: 0.25
+  max_audio_seconds: 20.0
+
+text:
+  use_phonemes: false
+  keep_punctuation: true
+  max_tokens: 256
+
+audio:
+  sample_rate: 22050
+  n_fft: 1024
+  hop_length: 256
+  win_length: 1024
+  n_mels: 80
+  f_min: 0.0
+  f_max: 8000.0
+  power: 1.0
+  griffin_lim_iters: 32
+
+model:
+  type: tacotron_lite
+  hidden_size: 256
+  reduction_factor: 4
+  encoder_conv_layers: 3
+  encoder_dropout: 0.15
+  prenet_sizes: [256, 128]
+  attention_dim: 128
+  decoder_dim: 512
+  location_channels: 32
+  location_kernel_size: 31
+  postnet_channels: 512
+  postnet_layers: 5
+  dropout: 0.5
+  postnet_dropout: 0.5
+  max_decoder_steps: 1200
+  stop_threshold: 0.55
+  attention_window: 12
+
+training:
+  batch_size: 16
+  epochs: 80
+  learning_rate: 0.001
+  weight_decay: 0.000001
+  grad_clip: 1.0
+  log_interval: 20
+  val_interval: 500
+  save_interval: 1000
+  num_workers: 4
+  checkpoints_dir: checkpoints_tacotron
+  runs_dir: runs
+  resume: null
+  mel_loss_weight: 1.0
+  stop_loss_weight: 0.5
+  guided_attention_weight: 1.0
+  guided_attention_sigma: 0.4

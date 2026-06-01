@@ -2,23 +2,26 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import torch
 
 from .audio import save_wav
 from .models.tacotron import TacotronLite
-from .models.vocoder import GriffinLimVocoder
+from .models.vocoder import GriffinLimVocoder, load_vocoder_from_config
 from .text import TextTokenizer
 from .utils import count_parameters, format_param_count, get_device, load_config
 
 
 def load_model(config: dict[str, Any], tokenizer: TextTokenizer, checkpoint: str, device: torch.device) -> TacotronLite:
+    runtime_vocoder = config.get("vocoder")
     ckpt = torch.load(checkpoint, map_location=device)
     ckpt_config = ckpt.get("config")
     if isinstance(ckpt_config, dict):
         config.clear()
         config.update(ckpt_config)
+        if runtime_vocoder is not None:
+            config["vocoder"] = runtime_vocoder
     model = TacotronLite(
         vocab_size=tokenizer.vocab_size,
         n_mels=int(config["audio"]["n_mels"]),
@@ -54,6 +57,7 @@ def synthesize(
     attention_window: int | None = None,
     normalize_wav: bool = False,
     debug: bool = False,
+    vocoder: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
     token_ids = tokenizer.encode(text)
     tokens = torch.tensor(token_ids, dtype=torch.long, device=device).unsqueeze(0)
@@ -81,7 +85,9 @@ def synthesize(
         print(f"attention first/last: {int(align_path[0].item())} -> {int(align_path[-1].item())} / {len(token_ids) - 1}")
         print(f"attention max index reached: {int(align_path.max().item())} / {len(token_ids) - 1}")
         print(f"last stop prob: {float(torch.sigmoid(output.stop_logits[0, -1]).cpu()):.3f}")
-    wav = GriffinLimVocoder(config["audio"])(mel)
+    if vocoder is None:
+        vocoder = GriffinLimVocoder(config["audio"])
+    wav = vocoder(mel)
     if normalize_wav:
         peak = wav.abs().max()
         if peak > 0:
@@ -100,12 +106,16 @@ def main() -> None:
     parser.add_argument("--attention-window", type=int, default=None)
     parser.add_argument("--normalize-wav", action="store_true")
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--vocoder", choices=["auto", "griffin-lim", "hifigan"], default="auto")
+    parser.add_argument("--vocoder-checkpoint", default=None)
     args = parser.parse_args()
 
     config = load_config(args.config)
     tokenizer = TextTokenizer.from_config(config["text"])
     device = get_device()
     model = load_model(config, tokenizer, args.checkpoint, device)
+    vocoder_type = None if args.vocoder == "auto" else args.vocoder
+    vocoder = load_vocoder_from_config(config, device, checkpoint=args.vocoder_checkpoint, vocoder_type=vocoder_type)
     wav = synthesize(
         config,
         model,
@@ -117,6 +127,7 @@ def main() -> None:
         attention_window=args.attention_window,
         normalize_wav=args.normalize_wav,
         debug=args.debug,
+        vocoder=vocoder,
     )
     save_wav(Path(args.out), wav, int(config["audio"]["sample_rate"]))
     print(f"Saved {args.out}")

@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import torch
 
 from .audio import save_wav
 from .models.acoustic import FastSpeech2AcousticModel
-from .models.vocoder import GriffinLimVocoder
+from .models.vocoder import GriffinLimVocoder, load_vocoder_from_config
 from .text import TextTokenizer
 from .utils import count_parameters, format_param_count, get_device, load_config
 
@@ -19,6 +19,7 @@ def load_acoustic(
     checkpoint: str | None,
     device: torch.device,
 ) -> FastSpeech2AcousticModel:
+    runtime_vocoder = config.get("vocoder")
     model = FastSpeech2AcousticModel(
         vocab_size=tokenizer.vocab_size,
         n_mels=int(config["audio"]["n_mels"]),
@@ -33,6 +34,8 @@ def load_acoustic(
         if isinstance(ckpt_config, dict):
             config.clear()
             config.update(ckpt_config)
+            if runtime_vocoder is not None:
+                config["vocoder"] = runtime_vocoder
         print(f"Loaded acoustic checkpoint: {checkpoint}")
     else:
         print("No checkpoint provided; synthesizing with random acoustic weights for pipeline debugging.")
@@ -54,6 +57,7 @@ def synthesize_text(
     wav_gain: float = 1.0,
     normalize_wav: bool = False,
     debug: bool = False,
+    vocoder: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
     token_ids = tokenizer.encode(text)
     tokens = torch.tensor(token_ids, dtype=torch.long, device=device).unsqueeze(0)
@@ -106,7 +110,8 @@ def synthesize_text(
             f"max={mel.max().item():.3f}",
             f"mean={mel.mean().item():.3f}",
         )
-    vocoder = GriffinLimVocoder(config["audio"])
+    if vocoder is None:
+        vocoder = GriffinLimVocoder(config["audio"])
     wav = vocoder(mel)
     if wav_gain != 1.0:
         wav = wav * float(wav_gain)
@@ -131,12 +136,16 @@ def main() -> None:
     parser.add_argument("--wav-gain", type=float, default=1.0)
     parser.add_argument("--normalize-wav", action="store_true")
     parser.add_argument("--debug-durations", action="store_true")
+    parser.add_argument("--vocoder", choices=["auto", "griffin-lim", "hifigan"], default="auto")
+    parser.add_argument("--vocoder-checkpoint", default=None)
     args = parser.parse_args()
 
     config = load_config(args.config)
     tokenizer = TextTokenizer.from_config(config["text"])
     device = get_device()
     model = load_acoustic(config, tokenizer, args.checkpoint, device)
+    vocoder_type = None if args.vocoder == "auto" else args.vocoder
+    vocoder = load_vocoder_from_config(config, device, checkpoint=args.vocoder_checkpoint, vocoder_type=vocoder_type)
     wav = synthesize_text(
         config,
         model,
@@ -149,6 +158,7 @@ def main() -> None:
         wav_gain=args.wav_gain,
         normalize_wav=args.normalize_wav,
         debug=args.debug_durations,
+        vocoder=vocoder,
     )
     save_wav(Path(args.out), wav, int(config["audio"]["sample_rate"]))
     print(f"Saved {args.out}")

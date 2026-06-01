@@ -288,6 +288,7 @@ def prepare_ljspeech(
                     "tokens": torch.tensor(token_ids, dtype=torch.long),
                     "durations": durations,
                     "mel": mel_float,
+                    "wav": wav.to(torch.float32),
                     "text": raw_text,
                     "normalized_text": normalized,
                 },
@@ -319,6 +320,7 @@ def prepare_ljspeech(
         "audio": audio_cfg,
         "text": tokenizer.to_dict(),
         "duration_target": "uniform_content_v1",
+        "contains_wav": True,
         "mel_stats": {
             "mean": mel_mean,
             "std": mel_std,

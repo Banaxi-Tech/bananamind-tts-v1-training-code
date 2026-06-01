@@ -63,3 +63,6 @@ test-v2/outputs/
 Thumbs.db
 .idea/
 .vscode/
+BananaMind-TTS-V2/
+configs/bananatts_v3_hifigan.yaml
+scripts/export_bananamind_v2.py

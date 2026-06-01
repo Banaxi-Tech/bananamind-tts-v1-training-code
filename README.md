@@ -2,7 +2,7 @@
 
 BananaTTS-20M is a from-scratch, single-speaker English TTS training pipeline for LJSpeech. It is intended to be a clear first working system, not a state-of-the-art voice model.
 
-This project trains one fixed English voice from text to mel spectrograms with a compact FastSpeech2-style acoustic model. The first version uses a Griffin-Lim vocoder fallback so synthesis can be debugged before a small HiFiGAN-style vocoder is implemented.
+This project trains one fixed English voice from text to mel spectrograms with a compact FastSpeech2-style acoustic model. V3 adds a self-trained HiFi-GAN vocoder for better waveform quality, while Griffin-Lim remains available as a debugging fallback.
 
 ## What This Is Not
 
@@ -38,6 +38,12 @@ python scripts/prepare_ljspeech.py --dataset keithito/lj_speech --limit 1000
 ```
 
 Prepared tensors, manifests, split files, and feature config are stored under `data/cache/ljspeech_22050`.
+
+V3 vocoder training needs waveform targets in the prepared tensors. If your cache was created before V3, rebuild it once:
+
+```bash
+python scripts/prepare_ljspeech.py --local-path data/raw/LJSpeech-1.1 --force
+```
 
 ## Smoke Test
 
@@ -101,6 +107,28 @@ Resume:
 python -m bananatts.train_acoustic --config configs/bananatts_20m.yaml --resume checkpoints/acoustic_latest.pt
 ```
 
+## Train V3 HiFi-GAN Vocoder
+
+The V3 vocoder is trained from scratch on the same prepared LJSpeech cache. It learns to convert the project log-mel features into waveform audio and replaces Griffin-Lim during synthesis.
+
+Small debug run:
+
+```bash
+python -m bananatts.train_vocoder \
+  --config configs/bananatts_v3_hifigan.yaml \
+  --prepare \
+  --local-path data/raw/LJSpeech-1.1 \
+  --limit 1000
+```
+
+Full run after the cache exists:
+
+```bash
+python -m bananatts.train_vocoder --config configs/bananatts_v3_hifigan.yaml
+```
+
+The latest generator checkpoint is saved at `checkpoints_vocoder/vocoder_latest.pt`.
+
 ## Synthesize
 
 With a trained checkpoint:
@@ -111,6 +139,32 @@ python -m bananatts.synthesize \
   --checkpoint checkpoints/acoustic_latest.pt \
   --text "Banana TTS is a small text to speech model." \
   --out samples/test.wav
+```
+
+With the V3 HiFi-GAN vocoder:
+
+```bash
+python -m bananatts.synthesize \
+  --config configs/bananatts_v3_hifigan.yaml \
+  --checkpoint checkpoints/acoustic_latest.pt \
+  --vocoder hifigan \
+  --vocoder-checkpoint checkpoints_vocoder/vocoder_latest.pt \
+  --text "Banana TTS now uses a self trained HiFi GAN vocoder." \
+  --out samples/test_v3.wav \
+  --normalize-wav
+```
+
+Tacotron-lite can use the same V3 vocoder checkpoint:
+
+```bash
+python -m bananatts.synthesize_tacotron \
+  --config configs/bananatts_tacotron.yaml \
+  --checkpoint checkpoints_tacotron/tacotron_latest.pt \
+  --vocoder hifigan \
+  --vocoder-checkpoint checkpoints_vocoder/vocoder_latest.pt \
+  --text "Hello from Banana TTS V3." \
+  --out samples/tacotron_v3.wav \
+  --normalize-wav
 ```
 
 Pipeline debug without a checkpoint:
@@ -127,7 +181,7 @@ Without a checkpoint, the model uses random weights, so the output is only usefu
 python scripts/count_params.py
 ```
 
-The current acoustic model is intentionally compact. The eventual target is around 20M inference parameters total after adding a small neural vocoder.
+The current acoustic model is intentionally compact. The V3 inference stack is roughly 26M parameters with the default acoustic model and HiFi-GAN generator.
 
 ## Architecture
 
@@ -146,12 +200,13 @@ Current acoustic model:
 Current vocoder:
 
 - Griffin-Lim fallback for debugging
-- `train_vocoder.py` is a clear TODO for a small HiFiGAN-style vocoder
+- compact HiFi-GAN generator with multi-period and multi-scale discriminators
+- self-trained from prepared LJSpeech waveform/mel pairs
 
 ## Expected Limitations
 
 - Uniform durations are a crude target and limit quality.
-- Griffin-Lim audio sounds rough and buzzy compared with a neural vocoder.
+- Griffin-Lim audio sounds rough and buzzy compared with the V3 neural vocoder.
 - Character input is less robust than phonemes for English pronunciation.
 - Training from scratch on LJSpeech needs real training time before intelligible speech appears.
 - No pretrained aligner, acoustic model, or vocoder is used.
@@ -164,7 +219,7 @@ For a 16 GB NVIDIA GPU:
 - Lower `batch_size` to 4-8 if clips or gradients exceed memory.
 - Mixed precision is enabled automatically on CUDA.
 - Use `--limit 1000` first to verify throughput and checkpoints.
-- Full LJSpeech acoustic training should fit, but Griffin-Lim synthesis is CPU-heavy and neural-vocoder training is not implemented yet.
+- Full LJSpeech acoustic training should fit. V3 HiFi-GAN training is more GPU-sensitive than acoustic training; lower `vocoder_training.batch_size` first if memory is tight.
 
 ## Useful Commands
 
@@ -172,5 +227,6 @@ For a 16 GB NVIDIA GPU:
 python scripts/prepare_ljspeech.py --dataset MikhailT/lj-speech --limit 1000
 python scripts/smoke_test.py
 python -m bananatts.train_acoustic --config configs/bananatts_20m.yaml --limit 1000
+python -m bananatts.train_vocoder --config configs/bananatts_v3_hifigan.yaml --limit 1000 --prepare
 python -m bananatts.synthesize --config configs/bananatts_20m.yaml --text "Hello from Banana TTS." --out samples/hello.wav
 ```

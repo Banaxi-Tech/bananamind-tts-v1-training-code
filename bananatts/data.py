@@ -148,10 +148,22 @@ def load_hf_ljspeech(dataset_name: str, split: str, cache_dir: str | None = None
 
 def load_local_ljspeech(local_path: str | Path) -> list[dict[str, Any]]:
     root = Path(local_path)
-    metadata_path = root / "metadata.csv"
+    metadata_paths = [root / "metadata.csv"]
+    if not metadata_paths[0].exists():
+        metadata_paths = [
+            path
+            for path in (
+                root / "metadata_train.csv",
+                root / "metadata_dev.csv",
+                root / "metadata_test.csv",
+            )
+            if path.exists()
+        ]
+    if not metadata_paths:
+        metadata_paths = sorted(root.glob("metadata*.csv"))
     wavs_dir = root / "wavs"
-    if not metadata_path.exists():
-        raise FileNotFoundError(f"Missing LJSpeech metadata.csv: {metadata_path}")
+    if not metadata_paths:
+        raise FileNotFoundError(f"Missing LJSpeech-style metadata CSV in {root}")
     if not wavs_dir.exists() or not wavs_dir.is_dir():
         raise FileNotFoundError(f"Missing LJSpeech wavs directory: {wavs_dir}")
     wav_count = sum(1 for _ in wavs_dir.glob("*.wav"))
@@ -159,20 +171,24 @@ def load_local_ljspeech(local_path: str | Path) -> list[dict[str, Any]]:
         raise FileNotFoundError(f"No WAV files found in {wavs_dir}")
 
     rows: list[tuple[str, str]] = []
-    with metadata_path.open("r", encoding="utf-8") as f:
-        for line_no, line in enumerate(f, start=1):
-            line = line.rstrip("\n")
-            if not line:
-                continue
-            parts = line.split("|")
-            if len(parts) < 2:
-                print(f"Warning: skipping malformed metadata row {line_no}: expected wav_id|transcript|normalized_transcript")
-                continue
-            wav_id = parts[0].strip()
-            transcript = parts[1].strip()
-            normalized = parts[2].strip() if len(parts) > 2 else ""
-            text = normalized or transcript
-            rows.append((wav_id, text))
+    for metadata_path in metadata_paths:
+        with metadata_path.open("r", encoding="utf-8") as f:
+            for line_no, line in enumerate(f, start=1):
+                line = line.rstrip("\n")
+                if not line:
+                    continue
+                parts = line.split("|")
+                if len(parts) < 2:
+                    print(
+                        f"Warning: skipping malformed metadata row {metadata_path.name}:{line_no}: "
+                        "expected wav_id|transcript|normalized_transcript"
+                    )
+                    continue
+                wav_id = parts[0].strip()
+                transcript = parts[1].strip()
+                normalized = parts[2].strip() if len(parts) > 2 else ""
+                text = normalized or transcript
+                rows.append((wav_id, text))
 
     records: list[dict[str, Any]] = []
     missing = 0
@@ -186,6 +202,9 @@ def load_local_ljspeech(local_path: str | Path) -> list[dict[str, Any]]:
             continue
         records.append({"text": text, "audio": str(wav_path), "wav_id": wav_id})
 
+    print("metadata files:")
+    for metadata_path in metadata_paths:
+        print(f"  {metadata_path.name}")
     print(f"total rows: {len(rows)}")
     print(f"valid rows: {len(records)}")
     if missing:
@@ -227,6 +246,8 @@ def prepare_ljspeech(
     audio_cfg = config["audio"]
     text_cfg = config["text"]
     dataset_name = dataset_name or dataset_cfg["name"]
+    if local_path is None and dataset_cfg.get("local_path"):
+        local_path = dataset_cfg["local_path"]
     split = dataset_cfg.get("split", "train")
     cache_root = Path(cache_root or dataset_cfg["cache_dir"])
     samples_dir = cache_root / "samples"

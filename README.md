@@ -23,6 +23,75 @@ pip install -r requirements.txt
 
 The code avoids making `torchaudio` mandatory for the core mel path, but `soundfile` or `torchaudio` is useful for Hugging Face audio decoding depending on your environment.
 
+## Train German V2.1 With Thorsten Voice
+
+This uses the Tacotron-lite acoustic model plus HiFi-GAN vocoder stack, but keeps every German artifact separate from the English run:
+
+- dataset cache: `data/cache/thorsten_de_22050`
+- acoustic checkpoints: `checkpoints_tacotron_thorsten_de`
+- vocoder checkpoints: `checkpoints_vocoder_thorsten_de`
+- TensorBoard runs: `runs/thorsten_de`
+
+Download and extract the Thorsten neutral 2022.10 dataset:
+
+```bash
+mkdir -p data/raw
+curl -L --fail -C - \
+  -o data/raw/ThorstenVoice-Dataset_2022.10.zip \
+  "https://zenodo.org/record/7265581/files/ThorstenVoice-Dataset_2022.10.zip?download=1"
+printf "c2c2cb0d8a2b3b240e140d9213cd39b8  data/raw/ThorstenVoice-Dataset_2022.10.zip\n" | md5sum -c -
+unzip -q -n data/raw/ThorstenVoice-Dataset_2022.10.zip -d data/raw
+```
+
+Prepare the German cache:
+
+```bash
+python scripts/prepare_ljspeech.py \
+  --config configs/bananamind_v2_1_thorsten_de.yaml \
+  --force
+```
+
+Train the German acoustic model:
+
+```bash
+python -m bananatts.train_tacotron \
+  --config configs/bananamind_v2_1_thorsten_de.yaml
+```
+
+Train the German HiFi-GAN vocoder:
+
+```bash
+python -m bananatts.train_vocoder \
+  --config configs/bananamind_v2_1_thorsten_de.yaml \
+  --prepare
+```
+
+Resume either run without touching English checkpoints:
+
+```bash
+python -m bananatts.train_tacotron \
+  --config configs/bananamind_v2_1_thorsten_de.yaml \
+  --resume checkpoints_tacotron_thorsten_de/tacotron_latest.pt
+
+python -m bananatts.train_vocoder \
+  --config configs/bananamind_v2_1_thorsten_de.yaml \
+  --resume checkpoints_vocoder_thorsten_de/vocoder_latest.pt
+```
+
+Test synthesis after both checkpoints exist:
+
+```bash
+python -m bananatts.synthesize_tacotron \
+  --config configs/bananamind_v2_1_thorsten_de.yaml \
+  --checkpoint checkpoints_tacotron_thorsten_de/tacotron_latest.pt \
+  --vocoder hifigan \
+  --vocoder-checkpoint checkpoints_vocoder_thorsten_de/vocoder_latest.pt \
+  --text "Hallo, ich bin eine deutsche Stimme von BananaMind TTS." \
+  --out samples/thorsten_de_test.wav \
+  --normalize-wav \
+  --debug
+```
+
 ## Prepare LJSpeech
 
 Default dataset:
@@ -174,6 +243,60 @@ python -m bananatts.synthesize --config configs/bananatts_20m.yaml --text "Hello
 ```
 
 Without a checkpoint, the model uses random weights, so the output is only useful for verifying that synthesis writes a WAV.
+
+## BananaMind V2/V3 WER Eval
+
+Take the first 1850 LibriTTS `test-clean` texts, synthesize them with the BananaMind V2/V3 Tacotron + HiFi-GAN path, then optionally transcribe the generated model audio with Voxtral Mini Transcribe and calculate WER against the original text.
+
+```bash
+python scripts/evaluate_bananamind_v2v3_wer.py
+```
+
+This writes BananaMind-generated WAVs and a manifest under `outputs/bananamind_v2v3_libritts_wer`, then prints generated model-audio hours and estimated OpenRouter transcription cost.
+
+To only inspect the selected text/source-audio duration without synthesis:
+
+```bash
+python scripts/evaluate_bananamind_v2v3_wer.py --metadata-only
+```
+
+After checking the generated model-audio hours/cost, explicitly confirm paid OpenRouter transcription and WER:
+
+```bash
+export OPENROUTER_API_KEY=sk-or-v1-...
+python scripts/evaluate_bananamind_v2v3_wer.py --transcribe --yes
+```
+
+To recompute WER from already saved transcripts after normalizer changes:
+
+```bash
+python scripts/evaluate_bananamind_v2v3_wer.py --recompute-wer-only
+```
+
+## Kokoro 82M WER Baseline
+
+Compare against local Kokoro 82M using plain PyTorch checkpoint loading, `espeak-ng` IPA phonemization, and local Whisper Large V3 transcription. This does not use the `kokoro` Python package. Both `kokoro-v1_0.pth` and the selected `voices/*.pt` file are loaded with `torch.load(..., weights_only=True)`.
+
+Expected local model folders:
+
+```bash
+/home/banaxi/ai-models/kokoro-82m
+/home/banaxi/ai-models/whisper-large-v3
+```
+
+Run synthesis only:
+
+```bash
+python scripts/evaluate_kokoro82m_whisper_wer.py
+```
+
+Run the full 1850-example Kokoro plus local Whisper WER baseline:
+
+```bash
+python scripts/evaluate_kokoro82m_whisper_wer.py --transcribe
+```
+
+Results are saved under `outputs/kokoro82m_whisper_large_v3_wer`. The script is resumable; existing WAVs and transcripts are reused unless `--force-synthesis` or `--force-transcribe` is passed.
 
 ## Parameter Count
 

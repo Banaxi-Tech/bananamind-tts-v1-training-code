@@ -7,7 +7,7 @@ __pycache__/
 .mypy_cache/
 .coverage
 htmlcov/
-
+BananaMind-TTS-V2.1/
 # Virtual environments and local config
 .venv/
 venv/

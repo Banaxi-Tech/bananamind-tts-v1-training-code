@@ -81,6 +81,42 @@ def batched_mels(wavs: torch.Tensor, mel_fn: MelSpectrogram) -> torch.Tensor:
     return torch.stack([mel_fn(wav).transpose(0, 1) for wav in wavs], dim=0)
 
 
+def resolve_resume_checkpoint(resume: str | Path) -> Path:
+    resume_str = str(resume)
+    if not resume_str.startswith("hf://"):
+        return Path(resume_str).expanduser()
+
+    repo_and_file = resume_str.removeprefix("hf://")
+    parts = repo_and_file.split("/", 2)
+    if len(parts) != 3:
+        raise ValueError(
+            "HF resume URIs must look like "
+            "hf://owner/repo/path/to/checkpoint.pt"
+        )
+    repo_id = f"{parts[0]}/{parts[1]}"
+    filename = parts[2]
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError as exc:
+        raise RuntimeError("Install huggingface_hub to resume from an hf:// checkpoint URI.") from exc
+
+    return Path(hf_hub_download(repo_id=repo_id, filename=filename))
+
+
+def load_training_checkpoint(path: Path, device: torch.device) -> dict[str, Any]:
+    ckpt = torch.load(path, map_location=device)
+    if not isinstance(ckpt, dict):
+        raise TypeError(f"Expected a dict checkpoint at {path}, got {type(ckpt).__name__}")
+    required = {"generator", "mpd", "msd", "optimizer_g", "optimizer_d"}
+    missing = sorted(required.difference(ckpt))
+    if missing:
+        raise KeyError(
+            f"{path} is not a full vocoder training checkpoint; missing keys: {', '.join(missing)}. "
+            "Use full_vocoder.pt, not the generator-only vocoder.safetensors export, when resuming training."
+        )
+    return ckpt
+
+
 def save_checkpoint(
     path: Path,
     generator: HiFiGANGenerator,
@@ -118,6 +154,7 @@ def main() -> None:
     parser.add_argument("--local-path", default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--percent", type=float, default=None)
+    parser.add_argument("--epochs", type=int, default=None, help="Override vocoder_training.epochs for this run.")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -125,6 +162,8 @@ def main() -> None:
     audio_cfg = config["audio"]
     vocoder_cfg = config.get("vocoder", {})
     train_cfg = config.get("vocoder_training", config.get("training", {}))
+    if args.epochs is not None:
+        train_cfg["epochs"] = int(args.epochs)
     cache_root = Path(config["dataset"]["cache_dir"])
 
     manifest_path = cache_root / "manifest.json"
@@ -186,7 +225,8 @@ def main() -> None:
     step = 0
     resume_path = args.resume or train_cfg.get("resume")
     if resume_path:
-        ckpt = torch.load(resume_path, map_location=device)
+        resolved_resume_path = resolve_resume_checkpoint(resume_path)
+        ckpt = load_training_checkpoint(resolved_resume_path, device)
         generator.load_state_dict(ckpt["generator"])
         mpd.load_state_dict(ckpt["mpd"])
         msd.load_state_dict(ckpt["msd"])
@@ -194,7 +234,7 @@ def main() -> None:
         optimizer_d.load_state_dict(ckpt["optimizer_d"])
         start_epoch = int(ckpt.get("epoch", 0)) + 1
         step = int(ckpt.get("step", 0))
-        print(f"Resumed V3 vocoder checkpoint: {resume_path}")
+        print(f"Resumed V3 vocoder checkpoint: {resolved_resume_path} (next epoch {start_epoch}, step {step})")
 
     print(f"Generator parameters: {format_param_count(count_parameters(generator))} ({count_parameters(generator):,})")
     print(f"Discriminator parameters: {format_param_count(count_parameters(mpd) + count_parameters(msd))}")
@@ -205,8 +245,13 @@ def main() -> None:
     log_interval = int(train_cfg.get("log_interval", 20))
     lambda_mel = float(train_cfg.get("lambda_mel", 45.0))
     lambda_feature = float(train_cfg.get("lambda_feature", 2.0))
+    target_epochs = int(train_cfg.get("epochs", 200))
 
-    for epoch in range(start_epoch, int(train_cfg.get("epochs", 200)) + 1):
+    if start_epoch > target_epochs:
+        print(f"Checkpoint is already past target epoch {target_epochs}; nothing to train.")
+        return
+
+    for epoch in range(start_epoch, target_epochs + 1):
         generator.train()
         mpd.train()
         msd.train()
@@ -293,6 +338,17 @@ def main() -> None:
 
         save_checkpoint(
             checkpoints_dir / "vocoder_latest.pt",
+            generator,
+            mpd,
+            msd,
+            optimizer_g,
+            optimizer_d,
+            config,
+            epoch,
+            step,
+        )
+        save_checkpoint(
+            checkpoints_dir / f"vocoder_epoch_{epoch}.pt",
             generator,
             mpd,
             msd,

@@ -198,6 +198,39 @@ python -m bananatts.train_vocoder --config configs/bananatts_v3_hifigan.yaml
 
 The latest generator checkpoint is saved at `checkpoints_vocoder/vocoder_latest.pt`.
 
+Resume the English V2.1 preview vocoder from the full Hugging Face training checkpoint and continue to epoch 65:
+
+```bash
+python -m bananatts.train_vocoder \
+  --config configs/bananatts_v3_hifigan.yaml \
+  --resume hf://Banaxi-Tech/BananaMind-TTS-V2.1-Preview/en-us/full_vocoder.pt \
+  --epochs 65
+```
+
+This is the English `en-us` resume path. Do not use `configs/bananamind_v2_1_thorsten_de.yaml` unless you intentionally want to train the German Thorsten vocoder.
+
+Use `full_vocoder.pt` for resume because it includes the generator, discriminators, optimizer states, epoch, and step. The smaller `vocoder.safetensors` files are generator-only exports for inference and cannot continue adversarial vocoder training.
+
+RunPod setup from a fresh pod:
+
+```bash
+git clone <your-repo-url> BananaMind-TTS
+cd BananaMind-TTS/banana-tts-20m
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+
+python -m bananatts.train_vocoder \
+  --config configs/bananatts_v3_hifigan.yaml \
+  --prepare \
+  --dataset MikhailT/lj-speech \
+  --resume hf://Banaxi-Tech/BananaMind-TTS-V2.1-Preview/en-us/full_vocoder.pt \
+  --epochs 65
+```
+
+If your RunPod volume already has `data/cache/ljspeech_22050`, omit `--prepare`. If the cache was created before waveform targets were stored, keep `--prepare` or run with `--force-prepare` once.
+
 ## Synthesize
 
 With a trained checkpoint:
